@@ -1,0 +1,64 @@
+# Plan morning-digest § 3 / § 4. Renders one rig page in CI and puts it on GitHub Pages as the
+# reviewer's preview. The HTML is never committed (ADR 0003: no previews in the repo).
+# Marker on: repo variable LANE_MARKER set. Marker off (clean-up): run with marker=off.
+name: preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      night:
+        description: night to render, runs/<night>.jsonl
+        default: '2026-10-28'
+      marker:
+        description: 'on: banner carries vars.LANE_MARKER · off: LANE_MARKER unset'
+        type: choice
+        options: ['on', 'off']
+        default: 'on'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --no-frozen-lockfile
+      - name: Save the page as one HTML file
+        env:
+          LANE_ID: lane-07
+          LANE_MARKER: ${{ inputs.marker == 'on' && vars.LANE_MARKER || '' }}
+          PORT: 8787
+          NIGHT: ${{ inputs.night }}
+        run: |
+          pnpm start > /tmp/rig.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://localhost:8787/health > /dev/null && break; sleep 1; done
+          mkdir -p _site
+          curl -fsS "http://localhost:8787/digest/${NIGHT}" -o _site/index.html
+          kill %1
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+          retention-days: 1
+
+  deploy:
+    needs: render
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
